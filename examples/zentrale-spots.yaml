@@ -1,0 +1,13 @@
+# Beispiel. In Home Assistant liegt diese Automation bereits unter
+# dem Alias „Zentrale Spots Farbe an Zusatzlichter“.
+# Weitere Zusatzlichter in der Liste slave_lights ergänzen.
+alias: Zentrale Spots Farbe an Zusatzlichter
+description: Zusatzlichter aus bei Aus oder Weiß, im Farbmodus Farbe übernehmen.
+use_blueprint:
+  path: custom/farbe-zusatzlichter.yaml
+  input:
+    main_light: light.zentrale_spots
+    slave_lights:
+      - light.pc_corsair_pc_corsair
+    brightness_mode: keep
+    fixed_brightness: 100

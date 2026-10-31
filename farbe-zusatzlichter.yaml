@@ -1,0 +1,149 @@
+blueprint:
+  name: Farbe vom Hauptlicht an Zusatzlichter
+  source_url: https://github.com/tobivankenobi97/ha-farbe-zusatzlichter/blob/main/farbe-zusatzlichter.yaml
+  description: >
+    Zusatzlichter folgen dem Hauptlicht. Aus oder Weiß/Warmweiß
+    (Farbtemperatur) schaltet sie aus. Im Farbmodus übernehmen sie
+    die Farbe. Weitere Zusatzlichter können in der Automation
+    dazugewählt werden. Die Helligkeit der Zusatzlichter bleibt
+    standardmäßig unverändert.
+  domain: automation
+  input:
+    main_light:
+      name: Hauptlicht
+      description: Licht, dessen Farbe übernommen wird. Zum Beispiel Zentrale Spots.
+      selector:
+        entity:
+          domain: light
+          multiple: false
+    slave_lights:
+      name: Zusatzlichter
+      description: Lichter, die mitziehen. Es können später weitere ergänzt werden.
+      selector:
+        entity:
+          domain: light
+          multiple: true
+    brightness_mode:
+      name: Helligkeit der Zusatzlichter
+      description: >
+        „Eigene Helligkeit behalten“ ändert nur die Farbe. Die anderen
+        Optionen setzen die Helligkeit bei jedem Farbwechsel neu.
+      default: keep
+      selector:
+        select:
+          options:
+            - label: Eigene Helligkeit behalten
+              value: keep
+            - label: Vom Hauptlicht übernehmen
+              value: follow
+            - label: Feste Helligkeit
+              value: fixed
+    fixed_brightness:
+      name: Feste Helligkeit
+      description: Gilt nur bei „Feste Helligkeit“. 100 ist volle Helligkeit.
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+
+mode: restart
+
+variables:
+  main_light: !input main_light
+  brightness_mode: !input brightness_mode
+  fixed_brightness: !input fixed_brightness
+
+triggers:
+  - trigger: state
+    entity_id: !input main_light
+  - trigger: state
+    entity_id: !input slave_lights
+    to: "on"
+  - trigger: state
+    entity_id: !input slave_lights
+    from: unavailable
+  - trigger: homeassistant
+    event: start
+
+actions:
+  - alias: Nach dem Start kurz warten
+    choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.platform == 'homeassistant' }}"
+        sequence:
+          - delay:
+              seconds: 15
+
+  - alias: Farbmodus oder aus
+    choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ states(main_light) == 'on'
+                 and state_attr(main_light, 'color_mode') in ['xy', 'hs', 'rgb', 'rgbw', 'rgbww']
+                 and state_attr(main_light, 'rgb_color') is not none }}
+        sequence:
+          - delay:
+              milliseconds: 300
+          - alias: Farbe übernehmen
+            repeat:
+              for_each: !input slave_lights
+              sequence:
+                - if:
+                    - condition: template
+                      value_template: "{{ states(repeat.item) not in ['unavailable', 'unknown'] }}"
+                  then:
+                    - choose:
+                        - conditions:
+                            - condition: template
+                              value_template: "{{ brightness_mode == 'follow' }}"
+                          sequence:
+                            - action: light.turn_on
+                              continue_on_error: true
+                              target:
+                                entity_id: "{{ repeat.item }}"
+                              data:
+                                rgb_color: "{{ state_attr(main_light, 'rgb_color') }}"
+                                brightness: "{{ state_attr(main_light, 'brightness') | int(255) }}"
+                        - conditions:
+                            - condition: template
+                              value_template: "{{ brightness_mode == 'fixed' }}"
+                          sequence:
+                            - action: light.turn_on
+                              continue_on_error: true
+                              target:
+                                entity_id: "{{ repeat.item }}"
+                              data:
+                                rgb_color: "{{ state_attr(main_light, 'rgb_color') }}"
+                                brightness: "{{ [[(fixed_brightness | float(100) / 100 * 255) | round(0) | int, 1] | max, 255] | min }}"
+                      default:
+                        - action: light.turn_on
+                          continue_on_error: true
+                          target:
+                            entity_id: "{{ repeat.item }}"
+                          data:
+                            rgb_color: "{{ state_attr(main_light, 'rgb_color') }}"
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ states(main_light) == 'off'
+                 or (states(main_light) == 'on'
+                     and state_attr(main_light, 'color_mode') == 'color_temp') }}
+        sequence:
+          - alias: Zusatzlichter aus
+            repeat:
+              for_each: !input slave_lights
+              sequence:
+                - if:
+                    - condition: template
+                      value_template: "{{ states(repeat.item) == 'on' }}"
+                  then:
+                    - action: light.turn_off
+                      continue_on_error: true
+                      target:
+                        entity_id: "{{ repeat.item }}"
